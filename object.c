@@ -9,32 +9,26 @@
 #include <openssl/evp.h>
 
 void hash_to_hex(const ObjectID *id, char *hex_out) {
-    for (int i = 0; i < HASH_SIZE; i++) {
-        sprintf(hex_out + i * 2, "%02x", id->hash[i]);
-    }
+    for (int i = 0; i < HASH_SIZE; i++) sprintf(hex_out + i * 2, "%02x", id->hash[i]);
     hex_out[HASH_HEX_SIZE] = '\0';
 }
 
 int hex_to_hash(const char *hex, ObjectID *id_out) {
     if (strlen(hex) < HASH_HEX_SIZE) return -1;
-
     for (int i = 0; i < HASH_SIZE; i++) {
         unsigned int byte;
         if (sscanf(hex + i * 2, "%2x", &byte) != 1) return -1;
         id_out->hash[i] = (uint8_t)byte;
     }
-
     return 0;
 }
 
 void compute_hash(const void *data, size_t len, ObjectID *id_out) {
     unsigned int hash_len;
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-
     EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
     EVP_DigestUpdate(ctx, data, len);
     EVP_DigestFinal_ex(ctx, id_out->hash, &hash_len);
-
     EVP_MD_CTX_free(ctx);
 }
 
@@ -50,10 +44,8 @@ int object_exists(const ObjectID *id) {
     return access(path, F_OK) == 0;
 }
 
-// Handles writing objects to storage
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     char type_str[16];
-
     if (type == OBJ_BLOB) strcpy(type_str, "blob");
     else if (type == OBJ_TREE) strcpy(type_str, "tree");
     else if (type == OBJ_COMMIT) strcpy(type_str, "commit");
@@ -98,10 +90,15 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    if (write(fd, full, total_len) != (ssize_t)total_len) {
-        close(fd);
-        free(full);
-        return -1;
+    size_t written = 0;
+    while (written < total_len) {
+        ssize_t n = write(fd, full + written, total_len - written);
+        if (n <= 0) {
+            close(fd);
+            free(full);
+            return -1;
+        }
+        written += n;
     }
 
     fsync(fd);
@@ -180,6 +177,11 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     else if (strcmp(type_str, "tree") == 0) *type_out = OBJ_TREE;
     else if (strcmp(type_str, "commit") == 0) *type_out = OBJ_COMMIT;
     else {
+        free(buf);
+        return -1;
+    }
+
+    if (header_len + size_val > (size_t)file_size) {
         free(buf);
         return -1;
     }
