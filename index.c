@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <dirent.h>
 
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+
 IndexEntry* index_find(Index *index, const char *path) {
     for (int i = 0; i < index->count; i++)
         if (strcmp(index->entries[i].path, path) == 0)
@@ -29,15 +31,11 @@ int index_remove(Index *index, const char *path) {
     return -1;
 }
 
-int index_status(const Index *index) {
-    (void)index;
-    return 0;
-}
+int index_status(const Index *index) { (void)index; return 0; }
 
 int index_load(Index *index) {
     if (!index) return -1;
     index->count = 0;
-
     FILE *fp = fopen(INDEX_FILE, "r");
     if (!fp) return 0;
 
@@ -67,8 +65,6 @@ static int cmp_entries(const void *a, const void *b) {
 }
 
 int index_save(const Index *index) {
-    if (!index) return -1;
-
     mkdir(PES_DIR, 0755);
 
     char temp[] = ".pes/index.tmpXXXXXX";
@@ -76,10 +72,7 @@ int index_save(const Index *index) {
     if (fd < 0) return -1;
 
     FILE *fp = fdopen(fd, "w");
-    if (!fp) {
-        close(fd);
-        return -1;
-    }
+    if (!fp) return -1;
 
     Index sorted = *index;
     qsort(sorted.entries, sorted.count, sizeof(IndexEntry), cmp_entries);
@@ -99,13 +92,44 @@ int index_save(const Index *index) {
     fflush(fp);
     fsync(fd);
     fclose(fp);
-
-    if (rename(temp, INDEX_FILE) != 0) return -1;
-    return 0;
+    return rename(temp, INDEX_FILE);
 }
 
 int index_add(Index *index, const char *path) {
-    (void)index;
-    (void)path;
-    return -1;
+    if (!index || !path) return -1;
+    if (index->count >= MAX_INDEX_ENTRIES) return -1;
+
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    void *buf = malloc((size_t)st.st_size ? (size_t)st.st_size : 1);
+    if (!buf) {
+        fclose(fp);
+        return -1;
+    }
+
+    fread(buf, 1, (size_t)st.st_size, fp);
+    fclose(fp);
+
+    ObjectID id;
+    if (object_write(OBJ_BLOB, buf, (size_t)st.st_size, &id) != 0) {
+        free(buf);
+        return -1;
+    }
+    free(buf);
+
+    IndexEntry *e = index_find(index, path);
+    if (!e) e = &index->entries[index->count++];
+
+    e->mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
+    e->hash = id;
+    e->mtime_sec = (uint64_t)st.st_mtime;
+    e->size = (uint32_t)st.st_size;
+    strncpy(e->path, path, sizeof(e->path) - 1);
+    e->path[sizeof(e->path) - 1] = '\0';
+
+    return index_save(index);
 }
