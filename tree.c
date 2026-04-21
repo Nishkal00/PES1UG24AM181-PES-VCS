@@ -18,8 +18,9 @@ uint32_t get_file_mode(const char *path) {
 }
 
 static int compare_tree_entries(const void *a, const void *b) {
-    return strcmp(((const TreeEntry *)a)->name,
-                  ((const TreeEntry *)b)->name);
+    const TreeEntry *ea = (const TreeEntry *)a;
+    const TreeEntry *eb = (const TreeEntry *)b;
+    return strcmp(ea->name, eb->name);
 }
 
 int tree_parse(const void *data, size_t len, Tree *tree_out) {
@@ -35,6 +36,7 @@ int tree_parse(const void *data, size_t len, Tree *tree_out) {
         if (tree_out->count >= MAX_TREE_ENTRIES) return -1;
 
         TreeEntry *entry = &tree_out->entries[tree_out->count];
+
         const uint8_t *space = memchr(ptr, ' ', end - ptr);
         if (!space) return -1;
 
@@ -66,19 +68,19 @@ int tree_parse(const void *data, size_t len, Tree *tree_out) {
     }
 
     qsort(tree_out->entries, tree_out->count, sizeof(TreeEntry), compare_tree_entries);
+
+    for (int i = 1; i < tree_out->count; i++) {
+        if (strcmp(tree_out->entries[i - 1].name, tree_out->entries[i].name) == 0)
+            return -1;
+    }
+
     return 0;
 }
 
 int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
     if (!tree || !data_out || !len_out) return -1;
 
-    if (tree->count == 0) {
-        *data_out = malloc(1);
-        *len_out = 0;
-        return *data_out ? 0 : -1;
-    }
-
-    size_t max_size = (size_t)tree->count * 600;
+    size_t max_size = tree->count ? (size_t)tree->count * 600 : 1;
     uint8_t *buffer = malloc(max_size);
     if (!buffer) return -1;
 
@@ -89,14 +91,21 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 
     for (int i = 0; i < sorted.count; i++) {
         const TreeEntry *entry = &sorted.entries[i];
+
         int n = snprintf((char *)buffer + offset, max_size - offset,
                          "%o %s", entry->mode, entry->name);
-        if (n < 0) {
+        if (n < 0 || (size_t)n + 1 > max_size - offset) {
             free(buffer);
             return -1;
         }
 
         offset += (size_t)n + 1;
+
+        if (offset + HASH_SIZE > max_size) {
+            free(buffer);
+            return -1;
+        }
+
         memcpy(buffer + offset, entry->hash.hash, HASH_SIZE);
         offset += HASH_SIZE;
     }
@@ -107,6 +116,7 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 }
 
 int tree_from_index(ObjectID *id_out) {
-    (void)id_out;
+    if (!id_out) return -1;
+    memset(id_out->hash, 0, HASH_SIZE);
     return 0;
 }
