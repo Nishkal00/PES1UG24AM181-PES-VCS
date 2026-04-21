@@ -17,11 +17,15 @@ uint32_t get_file_mode(const char *path) {
     return MODE_FILE;
 }
 
+static int compare_tree_entries(const void *a, const void *b) {
+    return strcmp(((const TreeEntry *)a)->name,
+                  ((const TreeEntry *)b)->name);
+}
+
 int tree_parse(const void *data, size_t len, Tree *tree_out) {
     if (!data || !tree_out) return -1;
 
     tree_out->count = 0;
-
     const uint8_t *ptr = (const uint8_t *)data;
     const uint8_t *end = ptr + len;
 
@@ -29,7 +33,6 @@ int tree_parse(const void *data, size_t len, Tree *tree_out) {
         if (tree_out->count >= MAX_TREE_ENTRIES) return -1;
 
         TreeEntry *entry = &tree_out->entries[tree_out->count];
-
         const uint8_t *space = memchr(ptr, ' ', end - ptr);
         if (!space) return -1;
 
@@ -60,12 +63,14 @@ int tree_parse(const void *data, size_t len, Tree *tree_out) {
         tree_out->count++;
     }
 
-    return 0;
-}
+    qsort(tree_out->entries, tree_out->count, sizeof(TreeEntry), compare_tree_entries);
 
-static int compare_tree_entries(const void *a, const void *b) {
-    return strcmp(((const TreeEntry *)a)->name,
-                  ((const TreeEntry *)b)->name);
+    for (int i = 1; i < tree_out->count; i++) {
+        if (strcmp(tree_out->entries[i - 1].name, tree_out->entries[i].name) == 0)
+            return -1;
+    }
+
+    return 0;
 }
 
 int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
