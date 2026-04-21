@@ -23,9 +23,11 @@ static int compare_tree_entries(const void *a, const void *b) {
 }
 
 int tree_parse(const void *data, size_t len, Tree *tree_out) {
-    if (!data || !tree_out) return -1;
-
+    if (!tree_out) return -1;
     tree_out->count = 0;
+    if (len == 0) return 0;
+    if (!data) return -1;
+
     const uint8_t *ptr = (const uint8_t *)data;
     const uint8_t *end = ptr + len;
 
@@ -64,20 +66,20 @@ int tree_parse(const void *data, size_t len, Tree *tree_out) {
     }
 
     qsort(tree_out->entries, tree_out->count, sizeof(TreeEntry), compare_tree_entries);
-
-    for (int i = 1; i < tree_out->count; i++) {
-        if (strcmp(tree_out->entries[i - 1].name, tree_out->entries[i].name) == 0)
-            return -1;
-    }
-
     return 0;
 }
 
 int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
     if (!tree || !data_out || !len_out) return -1;
 
+    if (tree->count == 0) {
+        *data_out = malloc(1);
+        *len_out = 0;
+        return *data_out ? 0 : -1;
+    }
+
     size_t max_size = (size_t)tree->count * 600;
-    uint8_t *buffer = malloc(max_size ? max_size : 1);
+    uint8_t *buffer = malloc(max_size);
     if (!buffer) return -1;
 
     Tree sorted = *tree;
@@ -87,7 +89,13 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 
     for (int i = 0; i < sorted.count; i++) {
         const TreeEntry *entry = &sorted.entries[i];
-        int n = sprintf((char *)buffer + offset, "%o %s", entry->mode, entry->name);
+        int n = snprintf((char *)buffer + offset, max_size - offset,
+                         "%o %s", entry->mode, entry->name);
+        if (n < 0) {
+            free(buffer);
+            return -1;
+        }
+
         offset += (size_t)n + 1;
         memcpy(buffer + offset, entry->hash.hash, HASH_SIZE);
         offset += HASH_SIZE;
