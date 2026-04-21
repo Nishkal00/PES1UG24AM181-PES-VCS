@@ -15,20 +15,24 @@ void hash_to_hex(const ObjectID *id, char *hex_out) {
 
 int hex_to_hash(const char *hex, ObjectID *id_out) {
     if (strlen(hex) < HASH_HEX_SIZE) return -1;
+
     for (int i = 0; i < HASH_SIZE; i++) {
         unsigned int byte;
         if (sscanf(hex + i * 2, "%2x", &byte) != 1) return -1;
         id_out->hash[i] = (uint8_t)byte;
     }
+
     return 0;
 }
 
 void compute_hash(const void *data, size_t len, ObjectID *id_out) {
     unsigned int hash_len;
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+
     EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
     EVP_DigestUpdate(ctx, data, len);
     EVP_DigestFinal_ex(ctx, id_out->hash, &hash_len);
+
     EVP_MD_CTX_free(ctx);
 }
 
@@ -55,12 +59,12 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     char header[64];
     int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len) + 1;
 
-    size_t total_len = header_len + len;
+    size_t total_len = (size_t)header_len + len;
     unsigned char *full = malloc(total_len);
     if (!full) return -1;
 
-    memcpy(full, header, header_len);
-    memcpy(full + header_len, data, len);
+    memcpy(full, header, (size_t)header_len);
+    if (len > 0) memcpy(full + header_len, data, len);
 
     compute_hash(full, total_len, id_out);
 
@@ -82,9 +86,8 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     char final_path[512];
     object_path(id_out, final_path, sizeof(final_path));
 
-    char temp_template[] = "tempXXXXXX";
     char temp_path[512];
-    snprintf(temp_path, sizeof(temp_path), "%s/%s", shard_dir, temp_template);
+    snprintf(temp_path, sizeof(temp_path), "%s/tempXXXXXX", shard_dir);
 
     int fd = mkstemp(temp_path);
     if (fd < 0) {
@@ -104,7 +107,13 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         written += (size_t)n;
     }
 
-    fsync(fd);
+    if (fsync(fd) != 0) {
+        close(fd);
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
     close(fd);
 
     if (rename(temp_path, final_path) != 0) {
@@ -140,26 +149,22 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
         return -1;
     }
 
-    long file_size = ftell(fp);
-    if (file_size < 0) {
+    long file_size_long = ftell(fp);
+    if (file_size_long <= 0) {
         fclose(fp);
         return -1;
     }
 
+    size_t file_size = (size_t)file_size_long;
     rewind(fp);
 
-    if (file_size == 0) {
-        fclose(fp);
-        return -1;
-    }
-
-    unsigned char *buf = malloc((size_t)file_size);
+    unsigned char *buf = malloc(file_size);
     if (!buf) {
         fclose(fp);
         return -1;
     }
 
-    if (fread(buf, 1, (size_t)file_size, fp) != (size_t)file_size) {
+    if (fread(buf, 1, file_size, fp) != file_size) {
         fclose(fp);
         free(buf);
         return -1;
@@ -168,14 +173,14 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     fclose(fp);
 
     ObjectID check_id;
-    compute_hash(buf, (size_t)file_size, &check_id);
+    compute_hash(buf, file_size, &check_id);
 
     if (memcmp(check_id.hash, id->hash, HASH_SIZE) != 0) {
         free(buf);
         return -1;
     }
 
-    char *nul = memchr(buf, '\0', (size_t)file_size);
+    char *nul = memchr(buf, '\0', file_size);
     if (!nul) {
         free(buf);
         return -1;
@@ -199,7 +204,7 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
         return -1;
     }
 
-    if (header_len + size_val != (size_t)file_size) {
+    if (header_len + size_val != file_size) {
         free(buf);
         return -1;
     }
@@ -210,7 +215,7 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
         return -1;
     }
 
-    memcpy(*data_out, buf + header_len, size_val);
+    if (size_val > 0) memcpy(*data_out, buf + header_len, size_val);
     *len_out = size_val;
 
     free(buf);
