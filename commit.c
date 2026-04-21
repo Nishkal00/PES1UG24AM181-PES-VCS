@@ -199,13 +199,17 @@ int commit_create(const char *message, ObjectID *commit_id_out) {
     void *data = NULL;
     size_t len = 0;
 
-    if (commit_serialize(&c, &data, &len) != 0) return -1;
-
-    if (object_write(OBJ_COMMIT, data, len, commit_id_out) != 0) {
-        free(data);
+    if (commit_serialize(&c, &data, &len) != 0)
         return -1;
-    }
 
+    int rc = object_write(OBJ_COMMIT, data, len, commit_id_out);
     free(data);
-    return head_update(commit_id_out);
+
+    if (rc != 0)
+        return -1;
+
+    if (head_update(commit_id_out) != 0)
+        return -1;
+
+    return 0;
 }
