@@ -46,6 +46,7 @@ int object_exists(const ObjectID *id) {
 
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     char type_str[16];
+
     if (type == OBJ_BLOB) strcpy(type_str, "blob");
     else if (type == OBJ_TREE) strcpy(type_str, "tree");
     else if (type == OBJ_COMMIT) strcpy(type_str, "commit");
@@ -81,8 +82,9 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     char final_path[512];
     object_path(id_out, final_path, sizeof(final_path));
 
+    char temp_template[] = "tempXXXXXX";
     char temp_path[512];
-    snprintf(temp_path, sizeof(temp_path), "%s/tempXXXXXX", shard_dir);
+    snprintf(temp_path, sizeof(temp_path), "%s/%s", shard_dir, temp_template);
 
     int fd = mkstemp(temp_path);
     if (fd < 0) {
@@ -95,6 +97,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         ssize_t n = write(fd, full + written, total_len - written);
         if (n <= 0) {
             close(fd);
+            unlink(temp_path);
             free(full);
             return -1;
         }
@@ -105,6 +108,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     close(fd);
 
     if (rename(temp_path, final_path) != 0) {
+        unlink(temp_path);
         free(full);
         return -1;
     }
