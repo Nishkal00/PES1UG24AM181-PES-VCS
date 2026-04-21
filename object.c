@@ -101,7 +101,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
             free(full);
             return -1;
         }
-        written += n;
+        written += (size_t)n;
     }
 
     fsync(fd);
@@ -124,28 +124,42 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 }
 
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
+    if (!id || !type_out || !data_out || !len_out) return -1;
+
+    *data_out = NULL;
+    *len_out = 0;
+
     char path[512];
     object_path(id, path, sizeof(path));
 
     FILE *fp = fopen(path, "rb");
     if (!fp) return -1;
 
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    rewind(fp);
-
-    if (file_size <= 0) {
+    if (fseek(fp, 0, SEEK_END) != 0) {
         fclose(fp);
         return -1;
     }
 
-    unsigned char *buf = malloc(file_size);
+    long file_size = ftell(fp);
+    if (file_size < 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    rewind(fp);
+
+    if (file_size == 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    unsigned char *buf = malloc((size_t)file_size);
     if (!buf) {
         fclose(fp);
         return -1;
     }
 
-    if (fread(buf, 1, file_size, fp) != (size_t)file_size) {
+    if (fread(buf, 1, (size_t)file_size, fp) != (size_t)file_size) {
         fclose(fp);
         free(buf);
         return -1;
@@ -154,20 +168,20 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     fclose(fp);
 
     ObjectID check_id;
-    compute_hash(buf, file_size, &check_id);
+    compute_hash(buf, (size_t)file_size, &check_id);
 
     if (memcmp(check_id.hash, id->hash, HASH_SIZE) != 0) {
         free(buf);
         return -1;
     }
 
-    char *nul = memchr(buf, '\0', file_size);
+    char *nul = memchr(buf, '\0', (size_t)file_size);
     if (!nul) {
         free(buf);
         return -1;
     }
 
-    size_t header_len = (nul - (char *)buf) + 1;
+    size_t header_len = (size_t)(nul - (char *)buf) + 1;
 
     char type_str[16];
     size_t size_val;
@@ -185,7 +199,7 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
         return -1;
     }
 
-    if (header_len + size_val > (size_t)file_size) {
+    if (header_len + size_val != (size_t)file_size) {
         free(buf);
         return -1;
     }
